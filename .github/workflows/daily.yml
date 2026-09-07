@@ -78,6 +78,10 @@ jobs:
           # 注意 secret 名是 DEEPFLOOD_COOKIE（DEEP），须与拼写完全一致，
           # 之前曾误写为 DEPFLOOD_COOKIE 导致取不到值。
           DEEPFLOOD_COOKIE: ${{ secrets.DEEPFLOOD_COOKIE }}
+          # 评论行为可调（Variables 里设置，不设则用代码内安全默认：5 条 / 40-100 秒间隔）
+          NS_COMMENT_COUNT: ${{ vars.NS_COMMENT_COUNT }}
+          NS_COMMENT_GAP_MIN: ${{ vars.NS_COMMENT_GAP_MIN }}
+          NS_COMMENT_GAP_MAX: ${{ vars.NS_COMMENT_GAP_MAX }}
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24" python nodeseek_daily.py
 

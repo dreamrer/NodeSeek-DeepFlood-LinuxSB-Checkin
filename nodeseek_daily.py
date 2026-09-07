@@ -606,7 +606,9 @@ def nodeseek_comment(driver, site):
         
         # 过滤掉置顶帖
         valid_posts = [post for post in posts if not post.find_elements(By.CSS_SELECTOR, '.pined')]
-        selected_posts = random.sample(valid_posts, min(20, len(valid_posts)))
+        # 评论帖子数量可调（默认 5），一次刷太多条会被判机器 spam。
+        max_comments = _env_int("NS_COMMENT_COUNT", 5)
+        selected_posts = random.sample(valid_posts, min(max_comments, len(valid_posts)))
         
         # 存储已选择的帖子URL
         selected_urls = []
@@ -666,7 +668,12 @@ def nodeseek_comment(driver, site):
                 # 返回交易区
                 # driver.get(target_url)
                 # time.sleep(2)  # 等待页面加载
-                time.sleep(random.uniform(2,5))
+                # 评论间隔可调（默认 40-100 秒随机），拉长间隔更像真人、降低被封风险。
+                gap_min = _env_int("NS_COMMENT_GAP_MIN", 40)
+                gap_max = _env_int("NS_COMMENT_GAP_MAX", 100)
+                if gap_max < gap_min:
+                    gap_max = gap_min
+                time.sleep(random.uniform(gap_min, gap_max))
                 
             except Exception as e:
                 print(f"处理帖子时出错: {str(e)}")
