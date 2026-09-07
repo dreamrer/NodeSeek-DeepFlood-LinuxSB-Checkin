@@ -201,13 +201,22 @@ def load_sites():
     若两站都配置则顺序签到，中间加随机延迟避免被判定为机器批量行为。
     """
     sites = []
+
+    def add_multi(base_name, domain, raw):
+        """支持多账号：cookie 用 & 分隔，多个时名字加序号 #1/#2，单个保持原名。"""
+        if not raw:
+            return
+        cookies = [c.strip() for c in raw.split("&") if c.strip()]
+        multi = len(cookies) > 1
+        for i, ck in enumerate(cookies, 1):
+            name = f"{base_name}#{i}" if multi else base_name
+            sites.append(Site(name, domain, ck))
+
     ns_cookie = os.environ.get("NS_COOKIE") or os.environ.get("COOKIE")
-    if ns_cookie:
-        sites.append(Site("NodeSeek", "nodeseek.com", ns_cookie))
+    add_multi("NodeSeek", "nodeseek.com", ns_cookie)
 
     df_cookie = os.environ.get("DEEPFLOOD_COOKIE")
-    if df_cookie:
-        sites.append(Site("DeepFlood", "deepflood.com", df_cookie))
+    add_multi("DeepFlood", "deepflood.com", df_cookie)
 
     if not sites:
         print("未配置任何站点 cookie（至少需要 NS_COOKIE）")
