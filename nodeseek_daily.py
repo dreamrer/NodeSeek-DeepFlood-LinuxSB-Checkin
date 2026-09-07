@@ -152,7 +152,7 @@ headless = env_bool("HEADLESS", default=True)
 # 这些操作有被举报禁言的风险，需显式设置 NS_EXTRA_TASKS=true 才执行。
 extra_tasks_enabled = env_bool("NS_EXTRA_TASKS")
 
-randomInputStr = ["bd","绑定","帮顶"]
+randomInputStr = ["帮顶", "顶一个", "支持一下", "蹲一个", "前排支持", "顶", "mark一下", "收藏了", "支持支持", "路过帮顶", "不错哦", "顶帖"]
 
 # Cloudflare 挑战页（"Just a moment..." 5 秒盾）的特征。
 # 命中任一即说明当前页面不是论坛正文，此时任何元素定位都必然超时。
