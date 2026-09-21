@@ -790,68 +790,100 @@ def click_chicken_leg(driver):
         print(f"加鸡腿操作失败: {str(e)}")
         return False
 
-def run():
-    """
-    执行每日任务并推送通知。
-    遍历所有已配置站点（NodeSeek、DeepFlood 等），每站独立注入 cookie、签到、抓概览，
-    多站点间插入随机延迟降低被风控判为批量行为的概率，最后合并成一条通知。
-    返回进程退出码：全部签到成功为 0，否则为 1。
-    """
-    print("开始执行每日任务...")
-    # 记录任务启动时刻，作为通知顶部时间，早于各站签到时间，符合直觉的时间轴顺序
-    task_started_at = time.strftime('%Y-%m-%d %H:%M:%S')
-    sites = load_sites()
-    if not sites:
-        notify.send("每日任务失败", "未配置任何站点 cookie（至少需要 NS_COOKIE）")
-        return 1
+def _is_cf_failure(detail):
+    """判断失败是否与 Cloudflare 挑战有关（这类失败换个浏览器会话重试有机会成功）。"""
+    d = detail or ""
+    return ("Cloudflare" in d) or ("挑战" in d) or ("cookie 注入失败" in d)
 
-    # 多站点共用同一个浏览器实例，避免重复启动 Chrome
-    driver = create_driver()
-    if not driver:
-        print("浏览器初始化失败")
-        notify.send("每日任务失败", "浏览器初始化失败，请检查运行环境")
-        return 1
 
-    site_results = []
+def _process_sites(driver, sites, started_map):
+    """
+    在给定 driver 上依次处理若干站点，返回 {site.name: (site, sign_result, comment_stats, summary, started_at)}。
+    只处理传入的 sites（重试时只传未签成的站，避免已成功的站重复评论）。
+    """
+    results = {}
     for index, site in enumerate(sites):
-        # 第二站及以后先随机延迟，再开始注入。延迟在前可以拉开两站操作的时间间隔
         if index > 0:
             gap = random.randint(SITE_GAP_MIN, SITE_GAP_MAX)
             print(f"[{site.name}] 等待 {gap} 秒后再开始，避免连续签到被风控")
             time.sleep(gap)
-
-        # 记录本站开始签到的时间，写入通知，便于核对两站执行时点与延迟
-        started_at = time.strftime('%Y-%m-%d %H:%M:%S')
+        started_at = started_map.get(site.name) or time.strftime('%Y-%m-%d %H:%M:%S')
+        started_map[site.name] = started_at
         print(f"=== 处理 {site.name}（{site.domain}）===")
         if not inject_site_cookies(driver, site):
-            # cookie 注入失败也要纳入结果，让通知体现这一站异常
-            site_results.append((site, {"success": False, "detail": "cookie 注入失败"}, None, {}, started_at))
+            results[site.name] = (site, {"success": False, "detail": "cookie 注入失败"}, None, {}, started_at)
             continue
-
-        # 评论与加鸡腿受 NS_EXTRA_TASKS 控制，关闭时只执行签到
         if extra_tasks_enabled:
             print(f"[{site.name}] NS_EXTRA_TASKS 已开启，执行评论与加鸡腿任务")
             comment_stats = nodeseek_comment(driver, site)
         else:
             print(f"[{site.name}] NS_EXTRA_TASKS 未开启，仅执行签到")
             comment_stats = None
-
         sign_result = click_sign_icon(driver, site)
-
-        # 签到完成后顺带抓取账号概览，失败时也能在通知里看到当前状态
         print(f"[{site.name}] 抓取账号概览...")
         account_summary = fetch_account_summary(driver, site)
+        results[site.name] = (site, sign_result, comment_stats, account_summary, started_at)
+    return results
 
-        site_results.append((site, sign_result, comment_stats, account_summary, started_at))
 
-    try:
-        driver.quit()
-    except Exception:
-        pass
+def run():
+    """
+    执行每日任务并推送通知。
+    Cloudflare 挑战未过时，会关闭浏览器、重开一个全新会话，只重试尚未签成的站，
+    最多尝试 NS_CF_RETRY 次（默认 3）。已签成功的站不再重跑，不会重复评论。
+    返回进程退出码：全部签到成功为 0，否则为 1。
+    """
+    print("开始执行每日任务...")
+    task_started_at = time.strftime('%Y-%m-%d %H:%M:%S')
+    sites = load_sites()
+    if not sites:
+        notify.send("每日任务失败", "未配置任何站点 cookie（至少需要 NS_COOKIE）")
+        return 1
+
+    max_attempts = max(1, _env_int("NS_CF_RETRY", 3))
+    best = {}            # site.name -> 结果元组，保留每站最好的一次
+    started_map = {}     # site.name -> 首次开始时间
+    pending = list(sites)
+
+    for attempt in range(1, max_attempts + 1):
+        if not pending:
+            break
+        if attempt > 1:
+            backoff = random.randint(8, 20)
+            print(f"=== 第 {attempt} 次尝试（还有 {len(pending)} 站未签成），先等 {backoff} 秒并重开浏览器 ===")
+            time.sleep(backoff)
+
+        driver = create_driver()
+        if not driver:
+            print("浏览器初始化失败")
+            if attempt >= max_attempts:
+                # 最后一次仍起不来浏览器：把未签成的站标记为失败
+                for site in pending:
+                    best.setdefault(site.name, (site, {"success": False, "detail": "浏览器初始化失败"},
+                                                None, {}, started_map.get(site.name, task_started_at)))
+            continue
+
+        results = _process_sites(driver, pending, started_map)
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+        # 合并结果：成功的覆盖旧记录；失败的仅在还没有成功记录时保留
+        for name, res in results.items():
+            if res[1]["success"] or name not in best or not best[name][1]["success"]:
+                best[name] = res
+
+        # 下一轮只重试“因 CF 失败”的站；cookie 失效等非 CF 失败不重试（重试也没用）
+        pending = [site for site in sites
+                   if not best.get(site.name, (None, {"success": False}, None, None, None))[1]["success"]
+                   and _is_cf_failure(best.get(site.name, (None, {"detail": ""}, None, None, None))[1].get("detail"))]
+
+    # 按站点原始顺序整理结果
+    site_results = [best[site.name] for site in sites if site.name in best]
 
     print("脚本执行完成")
-
-    all_success = all(r[1]["success"] for r in site_results)
+    all_success = bool(site_results) and all(r[1]["success"] for r in site_results)
     title = "NodeSeek 每日任务" + ("" if all_success else "（签到异常）")
     notify.send(title, build_notify_content(site_results, task_started_at))
     return 0 if all_success else 1
