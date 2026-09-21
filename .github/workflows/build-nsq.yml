@@ -14,14 +14,12 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    # 在 Debian 11(glibc 2.31)容器里打包，兼容绝大多数在用的 Linux 服务器
+    # （Debian 11+/Ubuntu 20.04+/CentOS 8+ 都是 glibc >= 2.28）
+    container: python:3.11-bullseye
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
 
       - name: Install deps
         run: |
@@ -34,6 +32,8 @@ jobs:
           pyinstaller --onefile --name nsq nsq.py
           mv dist/nsq dist/nsq-linux-${{ matrix.arch }}
           ls -l dist
+          echo "=== glibc 版本 ==="
+          ldd --version | head -1
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
